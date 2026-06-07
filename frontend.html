@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Smart Waste Classifier</title>
+
+  <!-- Tailwind CDN for quick premium styles (works without build) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Simple icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/feather-icons/4.28.0/feather.min.css" />
+
+  <style>
+    /* small glassmorphism */
+    .glass {
+      background: rgba(255,255,255,0.05);
+      backdrop-filter: blur(8px);
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-gray-900 via-black to-gray-800 text-slate-100">
+
+  <div class="container mx-auto p-6 max-w-4xl">
+    <header class="flex items-center justify-between mb-8">
+      <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-green-300 to-emerald-500">
+        ♻️ Smart Waste Classifier
+      </h1>
+      <div class="text-sm text-slate-400">Upload image → Get classification</div>
+    </header>
+
+    <main class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- Left: Upload & result -->
+      <section class="glass p-6 shadow-lg">
+        <h2 class="text-xl font-semibold mb-3">Scan Waste</h2>
+        <p class="text-sm text-slate-400 mb-4">Upload a photo of the waste item. We'll classify it and show recommendations.</p>
+
+        <div class="mb-4">
+          <input id="fileInput" type="file" accept="image/*" class="block w-full text-sm text-slate-200" />
+        </div>
+
+        <div id="previewWrapper" class="mb-4 hidden">
+          <img id="preview" src="" alt="preview" class="w-full rounded-md object-cover border border-white/5" />
+        </div>
+
+        <div class="flex gap-3">
+          <button id="scanBtn" class="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-black font-semibold">Scan Waste</button>
+          <button id="clearBtn" class="px-4 py-2 rounded-lg bg-white/6 hover:bg-white/8">Clear</button>
+        </div>
+
+        <div id="status" class="mt-4 text-sm text-slate-400"></div>
+      </section>
+
+      <!-- Right: User info and locations -->
+      <section class="glass p-6 shadow-lg">
+        <h2 class="text-xl font-semibold mb-3">User Info</h2>
+        <form id="userForm" class="space-y-3">
+          <input id="name" type="text" placeholder="Name" class="w-full p-2 rounded bg-gray-800" />
+          <input id="age" type="number" placeholder="Age" class="w-full p-2 rounded bg-gray-800" />
+          <input id="location" type="text" placeholder="City / Locality" class="w-full p-2 rounded bg-gray-800" />
+          <button type="submit" class="w-full bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded">Save Info</button>
+        </form>
+
+        <hr class="my-4 border-white/5" />
+
+        <h3 class="font-semibold mb-2">Recommended Recycling Centers</h3>
+        <div id="centers" class="space-y-2 text-sm text-slate-300">
+          <!-- static sample list -->
+          <div class="p-3 rounded bg-white/3">Eco Recycling Hub — 1.2 km</div>
+          <div class="p-3 rounded bg-white/3">Green Earth Center — 3.5 km</div>
+          <div class="p-3 rounded bg-white/3">City Hazardous-Disposal — 5.1 km</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modal -->
+  <div id="resultModal" class="fixed inset-0 flex items-center justify-center bg-black/60 hidden">
+    <div class="glass max-w-md w-full p-6 rounded-2xl shadow-2xl">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h3 id="resultLabel" class="text-2xl font-bold"></h3>
+          <p id="resultConfidence" class="text-sm text-slate-300 mt-1"></p>
+        </div>
+        <button id="closeModal" class="text-slate-300 hover:text-white">✕</button>
+      </div>
+
+      <div id="resultSuggestion" class="mt-4 text-slate-300"></div>
+    </div>
+  </div>
+
+  <script>
+    // ========= Configuration =========
+    // ⚠️ When deploying, replace with your real backend URL:
+    //   e.g. const API_URL = "https://your-backend.onrailway.app"
+    const API_URL = "http://127.0.0.1:5000"; // local Flask for dev
+
+    // ======== UI logic ========
+    const fileInput = document.getElementById("fileInput");
+    const scanBtn = document.getElementById("scanBtn");
+    const preview = document.getElementById("preview");
+    const previewWrapper = document.getElementById("previewWrapper");
+    const status = document.getElementById("status");
+    const resultModal = document.getElementById("resultModal");
+    const resultLabel = document.getElementById("resultLabel");
+    const resultConfidence = document.getElementById("resultConfidence");
+    const resultSuggestion = document.getElementById("resultSuggestion");
+    const closeModal = document.getElementById("closeModal");
+
+    let currentFile = null;
+
+    fileInput.addEventListener("change", (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      currentFile = f;
+      preview.src = URL.createObjectURL(f);
+      previewWrapper.classList.remove("hidden");
+    });
+
+    scanBtn.addEventListener("click", async () => {
+      if (!currentFile) {
+        alert("Please upload an image first.");
+        return;
+      }
+      status.innerText = "Uploading and classifying...";
+
+      try {
+        const form = new FormData();
+        form.append("file", currentFile);
+
+        const res = await fetch(API_URL + "/predict", {
+          method: "POST",
+          body: form
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error("Server error: " + text);
+        }
+        const data = await res.json();
+        // expected return: { label: "recyclable", confidence: "92.34" }
+        resultLabel.innerText = data.label.toUpperCase();
+        resultConfidence.innerText = `Confidence: ${data.confidence}%`;
+        resultSuggestion.innerHTML = suggestionForLabel(data.label);
+        resultModal.classList.remove("hidden");
+      } catch (err) {
+        alert("Error: " + err.message);
+      } finally {
+        status.innerText = "";
+      }
+    });
+
+    closeModal.addEventListener("click", () => resultModal.classList.add("hidden"));
+
+    // small helper: recommendation text
+    function suggestionForLabel(label) {
+      if (!label) return "";
+      label = label.toLowerCase();
+      if (label.includes("recycl")) {
+        return "<p class='text-slate-300'>This item is recyclable. Please rinse if needed and drop it at the nearest recycling center. Avoid mixing with wet waste.</p>";
+      } else if (label.includes("hazard")) {
+        return "<p class='text-red-200'>This is hazardous waste. Please put it in a separate sealed bag and send to the hazardous disposal center.</p>";
+      } else {
+        return "<p class='text-slate-300'>This appears to be organic / general waste. Consider composting or disposing in organic-waste collection.</p>";
+      }
+    }
+
+    // Save user info
+    document.getElementById("userForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const payload = {
+        name: document.getElementById("name").value || "",
+        age: document.getElementById("age").value || "",
+        location: document.getElementById("location").value || ""
+      };
+      try {
+        await fetch(API_URL + "/userinfo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        alert("Info saved. Thanks!");
+      } catch (err) {
+        alert("Could not save info: " + err.message);
+      }
+    });
+  </script>
+</body>
+</html>
